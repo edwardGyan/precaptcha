@@ -1,0 +1,198 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="row justify-content-center mt-5">
+    <div class="col-md-6 col-sm-10">
+        <div class="card shadow-sm p-4">
+            <h3 class="card-title text-center mb-3">Create Your Account</h3>
+            <p class="text-center text-muted">Fill in your details to register.</p>
+
+            <form id="registerForm">
+                <div class="mb-3">
+                    <label for="username" class="form-label">Username</label>
+                    <input type="text" class="form-control" id="username" placeholder="Enter username" required>
+                </div>
+
+                <div class="mb-3">
+                    <label for="email" class="form-label">Email address</label>
+                    <input type="email" class="form-control" id="email" placeholder="Enter email" required>
+                </div>
+
+                <div class="mb-3">
+                    <label for="password" class="form-label">Password</label>
+                    <input type="password" class="form-control" id="password" placeholder="Enter password" required>
+                </div>
+
+                <div class="d-grid gap-2">
+                    <button type="submit" class="btn btn-primary btn-lg">Register</button>
+                </div>
+            </form>
+
+            <!-- Bot Simulation Button -->
+            <div class="text-center my-3">
+                <button id="simulateBot" class="btn btn-warning btn-sm">Simulate Bot</button>
+            </div>
+
+            <div id="result" class="mt-4"></div>
+
+            <!-- Charts -->
+            <div class="card mt-4 p-3">
+                <h5 class="mb-3 text-center">Behavior Visualization</h5>
+                <canvas id="mouseChart" height="150"></canvas>
+                <canvas id="typingChart" height="150" class="mt-3"></canvas>
+                <canvas id="idleChart" height="150" class="mt-3"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<!-- Chart.js CDN -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+// --- Behavior Recorder ---
+let behaviorData = {
+    mouse: [],
+    typing: [],
+    idleTimes: [],
+    lastActivity: Date.now(),
+    lastMouse: null,
+    lastKeyTime: null
+};
+
+// --- Idle Tracking ---
+function recordIdle() {
+    const now = Date.now();
+    const idle = now - behaviorData.lastActivity;
+    const idleType = idle > 2000 ? "long" : idle > 500 ? "short" : "very_short";
+    behaviorData.idleTimes.push({duration: idle, type: idleType, t: now});
+    behaviorData.lastActivity = now;
+}
+
+// --- Mouse ---
+document.addEventListener("mousemove", e => {
+    recordIdle();
+    const now = Date.now();
+    const prev = behaviorData.lastMouse;
+    let speed = null;
+    if (prev) {
+        const dx = e.clientX - prev.x;
+        const dy = e.clientY - prev.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        const dt = now - prev.t;
+        if(dt>0) speed = dist/dt;
+    }
+    const current = {x:e.clientX, y:e.clientY, t:now, speed};
+    behaviorData.mouse.push(current);
+    behaviorData.lastMouse = current;
+});
+
+// --- Typing ---
+document.addEventListener("keydown", e => {
+    recordIdle();
+    const now = Date.now();
+    let interval = null;
+    if(behaviorData.lastKeyTime) interval = now - behaviorData.lastKeyTime;
+    behaviorData.typing.push({key:e.key, t:now, interval});
+    behaviorData.lastKeyTime = now;
+});
+
+// --- Charts Setup ---
+const mouseCtx = document.getElementById('mouseChart').getContext('2d');
+const typingCtx = document.getElementById('typingChart').getContext('2d');
+const idleCtx = document.getElementById('idleChart').getContext('2d');
+
+let mouseChart = new Chart(mouseCtx, {
+    type: 'line',
+    data: {labels: [], datasets:[{label:'Mouse Speed (px/ms)', data: [], borderColor:'blue', fill:false}]},
+    options:{responsive:true, scales:{x:{title:{display:true,text:'Event #'}}, y:{title:{display:true,text:'Speed'}}}}
+});
+
+let typingChart = new Chart(typingCtx, {
+    type: 'line',
+    data: {labels: [], datasets:[{label:'Typing Interval (ms)', data: [], borderColor:'green', fill:false}]},
+    options:{responsive:true, scales:{x:{title:{display:true,text:'Key #'}}, y:{title:{display:true,text:'Interval'}}}}
+});
+
+let idleChart = new Chart(idleCtx, {
+    type: 'line',
+    data: {labels: [], datasets:[{label:'Idle Duration (ms)', data: [], borderColor:'red', fill:false}]},
+    options:{responsive:true, scales:{x:{title:{display:true,text:'Idle Event #'}}, y:{title:{display:true,text:'Duration'}}}}
+});
+
+// --- Function to Update Charts ---
+function updateCharts(){
+    // Mouse
+    mouseChart.data.labels = behaviorData.mouse.map((_,i)=>i+1);
+    mouseChart.data.datasets[0].data = behaviorData.mouse.map(m=>m.speed||0);
+    mouseChart.update();
+
+    // Typing
+    typingChart.data.labels = behaviorData.typing.map((_,i)=>i+1);
+    typingChart.data.datasets[0].data = behaviorData.typing.map(t=>t.interval||0);
+    typingChart.update();
+
+    // Idle
+    idleChart.data.labels = behaviorData.idleTimes.map((_,i)=>i+1);
+    idleChart.data.datasets[0].data = behaviorData.idleTimes.map(i=>i.duration);
+    idleChart.update();
+}
+
+// --- Submit Form ---
+const form = document.getElementById("registerForm");
+if(form){
+    form.addEventListener("submit", async (event)=>{
+        event.preventDefault();
+        const payload = {behavior: behaviorData, timestamp: new Date().toISOString()};
+
+        try {
+            const res = await fetch("/verify_behavior", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify(payload)
+            });
+            const result = await res.json();
+
+            const resultDiv = document.getElementById("result");
+            resultDiv.innerHTML = `
+                <div class="alert alert-${result.verified?'success':'danger'}" role="alert">
+                    <strong>${result.verified ? 'Human Verified ✅' : 'Verification Failed ❌'}</strong>
+                    <br>Score: ${result.score}
+                </div>
+                <div class="card card-body bg-light mt-2" style="max-height:300px;overflow:auto;font-size:0.85rem;">
+                    <pre>${JSON.stringify(result.debug_data,null,2)}</pre>
+                </div>
+            `;
+
+            updateCharts(); // Update charts after verification
+
+        } catch(error){
+            console.error("Verification error:", error);
+            document.getElementById("result").innerHTML =
+                `<div class="alert alert-danger">Error verifying behavior.</div>`;
+        }
+    });
+}
+
+// --- Simulate Bot ---
+document.getElementById("simulateBot").addEventListener("click", () => {
+    behaviorData = {mouse: [], typing: [], idleTimes: [], lastActivity: Date.now()};
+
+    // Bot mouse: straight line, constant speed
+    for(let i=0;i<20;i++){
+        behaviorData.mouse.push({x:i*10, y:i*5, t:Date.now()+i*50, speed:0.2});
+    }
+
+    // Bot typing: constant intervals
+    const keys = ['a','b','c','d','e','f'];
+    let t = Date.now();
+    keys.forEach((k,i)=>behaviorData.typing.push({key:k,t:t+i*100,interval:100}));
+
+    // Bot idle
+    behaviorData.idleTimes.push({duration:100, type:'very_short', t:Date.now()});
+
+    alert("Bot behavior simulated. Press Register to see verification.");
+    updateCharts(); // Show bot data immediately
+});
+</script>
+{% endblock %}
